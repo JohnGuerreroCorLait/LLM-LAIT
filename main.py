@@ -1,21 +1,20 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from fastapi import FastAPI, Request
-import torch
+from fastapi import FastAPI
+from pydantic import BaseModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 app = FastAPI()
 
-# Ruta local del modelo
-MODEL_PATH = "./models"
+# Carga del modelo
+model_name = "Meta/LLaMA-3"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
 
-# Cargar el modelo y el tokenizer
-tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, torch_dtype=torch.float16)
+class Query(BaseModel):
+    prompt: str
 
-@app.post("/generate")
-async def generate_text(request: Request):
-    data = await request.json()
-    prompt = data.get("prompt", "")
-    inputs = tokenizer(prompt, return_tensors="pt")
-    outputs = model.generate(inputs["input_ids"], max_new_tokens=100)
+@app.post("/chat")
+def chat(query: Query):
+    inputs = tokenizer(query.prompt, return_tensors="pt")
+    outputs = model.generate(**inputs, max_length=150)
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return {"response": response}
