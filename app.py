@@ -1,58 +1,43 @@
+import subprocess
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import requests
 import os
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 app = FastAPI()
 
-# URL del modelo
-MODEL_URL = "https://firebasestorage.googleapis.com/v0/b/doctoradocienciasdelasaludusco.appspot.com/o/LAIT%2Fllama-3.2-1b-instruct-q8_0.gguf?alt=media&token=68958f75-c6e2-4fac-9419-d40576cbffa8"
-MODEL_PATH = "llama-3-model.pt"
+# Ruta al modelo LLaMA
+MODEL_PATH = "llama-3.2-1b-instruct.gguf"
 
-# Model and tokenizer
-model = None
-tokenizer = None
+# Verifica que el modelo existe
+if not os.path.exists(MODEL_PATH):
+    raise Exception(f"Model file not found at {MODEL_PATH}")
 
-@app.on_event("startup")
-async def load_model():
-    global model, tokenizer
 
-    # Descargar el modelo si no existe localmente
-    if not os.path.exists(MODEL_PATH):
-        print("Downloading model...")
-        response = requests.get(MODEL_URL, stream=True)
-        if response.status_code == 200:
-            with open(MODEL_PATH, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            print("Model downloaded successfully.")
-        else:
-            raise Exception(f"Failed to download model: {response.status_code}")
+class GenerateRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 100
 
-    # Cargar el modelo y el tokenizador
-    print("Loading model and tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained("path/to/your-tokenizer")
-    model = AutoModelForCausalLM.from_pretrained("path/to/your-model")
-    model.load_state_dict(torch.load(MODEL_PATH))
-    print("Model and tokenizer loaded successfully.")
 
 @app.post("/generate")
-async def generate_text(request: dict):
+async def generate_text(request: GenerateRequest):
     try:
-        prompt = request.get("prompt", "")
-        max_length = request.get("max_length", 50)
+        # Construye el comando para ejecutar llama.cpp
+        command = [
+            "./main",
+            "-m", MODEL_PATH,
+            "-p", request.prompt,
+            "--tokens", str(request.max_tokens)
+        ]
 
-        if not prompt:
-            raise HTTPException(status_code=400, detail="Prompt is required.")
+        # Ejecuta el comando y captura la salida
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        # Generar texto
-        inputs = tokenizer(prompt, return_tensors="pt")
-        outputs = model.generate(**inputs, max_length=max_length, do_sample=True, temperature=0.7)
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        if result.returncode != 0:
+            raise Exception(f"Error running model: {result.stderr}")
 
-        return {"response": response}
+        # Retorna el resultado al cliente
+        output = result.stdout
+        return {"response": output.strip()}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
